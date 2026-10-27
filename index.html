@@ -1,0 +1,184 @@
+<script>
+        const micBtn = document.getElementById('micBtn');
+        const micText = document.getElementById('micText');
+        const statusMsg = document.getElementById('statusMsg');
+        const taskText = document.getElementById('taskText');
+        const taskPriority = document.getElementById('taskPriority');
+        const taskDeadline = document.getElementById('taskDeadline');
+        const saveBtn = document.getElementById('saveBtn');
+        const taskList = document.getElementById('taskList');
+
+        let tasks = JSON.parse(localStorage.getItem('voice_tasks')) || [];
+
+        const today = new Date().toISOString().split('T')[0];
+        taskDeadline.value = today;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.lang = 'hr-HR';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onstart = () => {
+                micBtn.classList.add('recording');
+                micText.textContent = 'Slušam... govori sada';
+                statusMsg.textContent = 'Govorite jasno u mikrofon...';
+            };
+
+            recognition.onresult = (event) => {
+                const speechResult = event.results[0][0].transcript;
+                taskText.value = speechResult;
+                statusMsg.textContent = 'Prepoznato! Provjeri tekst i spremi.';
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Greška prepoznavanja govora:', event.error);
+                if (event.error === 'not-allowed') {
+                    statusMsg.textContent = 'Mikrofon je blokiran! Provjeri dozvole u pregledniku.';
+                } else if (event.error === 'no-speech') {
+                    statusMsg.textContent = 'Govor nije detektiran. Pokušaj ponovno.';
+                } else {
+                    statusMsg.textContent = 'Greška mikrofona: ' + event.error;
+                }
+                stopRecordingUI();
+            };
+
+            recognition.onend = () => {
+                stopRecordingUI();
+            };
+        } else {
+            micBtn.style.display = 'none';
+            statusMsg.textContent = 'Pretvaranje govora u tekst nije podržano u ovom pregledniku. Koristi tipkanje.';
+        }
+
+        function stopRecordingUI() {
+            micBtn.classList.remove('recording');
+            micText.textContent = 'Snimi glasovnu bilješku';
+        }
+
+        micBtn.addEventListener('click', () => {
+            if (!recognition) return;
+            
+            // Provjera HTTPS-a ili localhosta
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                statusMsg.textContent = 'PAŽNJA: Mikrofon radi samo preko HTTPS veze ili na lokalnom serveru!';
+                return;
+            }
+
+            if (micBtn.classList.contains('recording')) {
+                recognition.stop();
+            } else {
+                try {
+                    recognition.start();
+                } catch(e) {
+                    console.error(e);
+                    recognition.stop();
+                }
+            }
+        });
+
+        saveBtn.addEventListener('click', () => {
+            const text = taskText.value.trim();
+            if (!text) {
+                alert('Molimo unesite ili snimite tekst bilješke!');
+                return;
+            }
+
+            const newTask = {
+                id: Date.now(),
+                text: text,
+                priority: taskPriority.value,
+                deadline: taskDeadline.value,
+                completed: false
+            };
+
+            tasks.unshift(newTask);
+            saveAndRender();
+
+            taskText.value = '';
+            statusMsg.textContent = 'Podsjetnik uspješno spremljen!';
+            setTimeout(() => { statusMsg.textContent = ''; }, 3000);
+        });
+
+        function saveAndRender() {
+            localStorage.setItem('voice_tasks', JSON.stringify(tasks));
+            renderTasks();
+        }
+
+        function renderTasks() {
+            taskList.innerHTML = '';
+            if (tasks.length === 0) {
+                taskList.innerHTML = '<div class="card" style="text-align: center; color: #64748b;">Nema spremljenih podsjetnika.</div>';
+                return;
+            }
+
+            tasks.forEach(task => {
+                const item = document.createElement('div');
+                item.className = `task-item ${task.completed ? 'completed' : ''}`;
+
+                let priorityLabel = 'Obično';
+                if (task.priority === 'hitno') priorityLabel = '🚨 Hitno';
+                if (task.priority === 'vazno') priorityLabel = '⭐ Važno';
+                if (task.priority === 'obicno') priorityLabel = '📌 Obično';
+                if (task.priority === 'nisko') priorityLabel = '💤 Manje bitno';
+
+                item.innerHTML = `
+                    <div class="task-header">
+                        <span class="badge priority-${task.priority}">${priorityLabel}</span>
+                        <span class="task-date">Rok: ${task.deadline || 'Nema roka'}</span>
+                    </div>
+                    <p class="task-text">${escapeHtml(task.text)}</p>
+                    <div class="task-footer">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem;">
+                            <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleComplete(${task.id})">
+                            Završeno
+                        </label>
+                        <div class="task-actions">
+                            <button class="btn-icon" onclick="editTask(${task.id})">Uredi</button>
+                            <button class="btn-icon btn-delete" onclick="deleteTask(${task.id})">Obriši</button>
+                        </div>
+                    </div>
+                `;
+                taskList.appendChild(item);
+            });
+        }
+
+        window.toggleComplete = function(id) {
+            tasks = tasks.map(t => t.id === id ? {...t, completed: !t.completed} : t);
+            saveAndRender();
+        }
+
+        window.deleteTask = function(id) {
+            if (confirm('Jeste li sigurni da želite obrisati ovaj podsjetnik?')) {
+                tasks = tasks.filter(t => t.id !== id);
+                saveAndRender();
+            }
+        }
+
+        window.editTask = function(id) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+
+            const newText = prompt('Uredi tekst podsjetnika:', task.text);
+            if (newText !== null) {
+                task.text = newText.trim();
+                saveAndRender();
+            }
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        renderTasks();
+    </script>
